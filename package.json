@@ -1,0 +1,31 @@
+{
+  "name": "tinybot",
+  "version": "0.1.0",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "tinybot": "bun run src/cli/main.ts",
+    "test": "vitest --run",
+    "test:cov": "vitest --run --coverage",
+    "build": "bun build ./src/index.ts --target=bun --outdir=./dist --packages=external",
+    "lint": "eslint \"**/*.{ts,tsx}\" --ext .ts --max-warnings=0",
+    "lint:fix": "eslint \"**/*.{ts,tsx}\" --ext .ts --fix"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.8",
+    "@types/node": "^25.2.2",
+    "@vitest/coverage-v8": "^4.0.18",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18",
+    "@antfu/eslint-config": "^7.4.3"
+  },
+  "dependencies": {
+    "@mozilla/readability": "^0.6.0",
+    "ajv": "^8.17.1",
+    "cac": "^6.7.14",
+    "consola": "^3.4.2",
+    "cron-parser": "^5.5.0",
+    "linkedom": "^0.18.12"
+  }
+}
