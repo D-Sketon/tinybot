@@ -176,7 +176,9 @@ describe("resolveSessionTarget", () => {
 
 describe("waitForResponse", () => {
   it("resolves only after receiving a matching outbound message", async () => {
-    let outboundHandler: ((msg: { chatId: string }) => void) | undefined;
+    let outboundHandler:
+      | ((msg: { chatId: string; kind?: string }) => void)
+      | undefined;
 
     const bus = {
       subscribeOutbound: vi.fn(
@@ -208,7 +210,11 @@ describe("waitForResponse", () => {
     await Promise.resolve();
     expect(bus.unsubscribeOutbound).not.toHaveBeenCalled();
 
-    outboundHandler?.({ chatId: "user-42" });
+    outboundHandler?.({ chatId: "user-42", kind: "delta" });
+    await Promise.resolve();
+    expect(bus.unsubscribeOutbound).not.toHaveBeenCalled();
+
+    outboundHandler?.({ chatId: "user-42", kind: "final" });
     await waitPromise;
 
     expect(bus.unsubscribeOutbound).toHaveBeenCalledWith(

@@ -38,6 +38,23 @@ describe("providers", () => {
     expect(response.content).toBe(`Echo (mock): ${longText.slice(0, 200)}...`);
   });
 
+  it("mock provider streams chunks and returns full content", async () => {
+    const provider = new MockProvider();
+    const messages: AgentMessage[] = [{ role: "user", content: "hello world" }];
+    const deltas: string[] = [];
+
+    const response = await provider.generateStream(
+      messages,
+      undefined,
+      (delta) => {
+        deltas.push(delta);
+      },
+    );
+
+    expect(deltas.join("")).toBe(response.content);
+    expect(deltas.length).toBeGreaterThan(1);
+  });
+
   it("openai provider builds tools payload", () => {
     const provider = new TestOpenAIProvider({
       model: "gpt-test",

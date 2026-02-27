@@ -13,6 +13,8 @@ export interface OutboundMessage {
   channel: string;
   chatId: string;
   content: string;
+  kind?: "message" | "delta" | "final";
+  sequence?: number;
   media?: string[];
   replyTo?: string;
   metadata?: Record<string, unknown>;

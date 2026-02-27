@@ -80,7 +80,8 @@ Environment variable overrides (implemented):
 ## Webhook
 
 - `GET /health`
-- `POST /inbound`
+- `POST /messages`
+- `POST /messages?stream=true` (SSE response)
 - optional `x-tinybot-secret` validation
 - waits for reply by default; use `?wait=false` for enqueue-only
 
@@ -96,6 +97,16 @@ Example:
   "metadata": {}
 }
 ```
+
+SSE stream example:
+
+```bash
+curl -N -X POST "http://127.0.0.1:18790/messages?stream=true" \
+  -H "content-type: application/json" \
+  -d '{"channel":"webhook","chatId":"demo-chat","senderId":"user-1","content":"hello"}'
+```
+
+Events: `ready`, `delta`, `final` (each `data` is JSON with `content`, `kind`, `sequence`).
 
 ## Development
 
@@ -114,4 +125,3 @@ bun run test:cov
 - `src/cli`: CLI entry commands
 - `src/config`: defaults, types, and loader
 - `workspace`: runtime data (memory / sessions / skills)
-

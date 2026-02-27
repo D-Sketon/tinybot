@@ -18,6 +18,7 @@ interface LoopOptions {
   provider: Provider;
   tools: ToolRegistry;
   sessionMessages?: AgentMessage[];
+  onStreamDelta?: (delta: string) => void | Promise<void>;
 }
 
 /**
@@ -29,13 +30,22 @@ export async function loop({
   provider,
   tools,
   sessionMessages = [],
+  onStreamDelta,
 }: LoopOptions) {
   let finalContent: string | null = null;
   let status: "ok" | "error" = "ok";
   for (let iteration = 0; iteration < maxIterations; iteration++) {
     let response: AssistantResponse;
     try {
-      response = await provider.generate(messages, tools.getDefinitions());
+      if (provider.generateStream && onStreamDelta) {
+        response = await provider.generateStream(
+          messages,
+          tools.getDefinitions(),
+          onStreamDelta,
+        );
+      } else {
+        response = await provider.generate(messages, tools.getDefinitions());
+      }
     } catch (error) {
       finalContent = `Provider error: ${(error as Error).message}`;
       status = "error";

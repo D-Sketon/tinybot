@@ -224,12 +224,29 @@ export class TinybotAgent {
         userMessage,
       ];
 
+      let streamSequence = 0;
+      let streamed = false;
+      const onStreamDelta = async (delta: string) => {
+        if (!delta) return;
+        streamed = true;
+        streamSequence += 1;
+        await this.bus.publishOutbound({
+          channel: message.channel,
+          chatId: message.chatId,
+          content: delta,
+          kind: "delta",
+          sequence: streamSequence,
+          replyTo: message.metadata?.replyTo as string | undefined,
+        });
+      };
+
       const { content } = await loop({
         maxIterations: this.config.maxToolIterations,
         messages: [...initialMessages],
         provider: this.provider,
         tools: this.tools,
         sessionMessages: conversationMessages,
+        onStreamDelta,
       });
 
       // Update and save session
@@ -241,6 +258,7 @@ export class TinybotAgent {
         chatId: message.chatId,
         content,
         replyTo: message.metadata?.replyTo as string | undefined,
+        kind: streamed ? "final" : undefined,
       });
 
       const replyBackTo =

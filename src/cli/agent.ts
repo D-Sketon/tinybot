@@ -176,7 +176,7 @@ export async function waitForResponse(
     };
 
     handler = async (msg: OutboundMessage) => {
-      if (msg.chatId === target.chatId) {
+      if (msg.chatId === target.chatId && msg.kind !== "delta") {
         finish();
       }
     };

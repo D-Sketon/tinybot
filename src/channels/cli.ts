@@ -19,6 +19,9 @@ export function attachCliChannel(
 ): void {
   const prefix = options.verbose ? "tinybot(cli,verbose)" : "tinybot";
   bus.subscribeOutbound("cli", async (message: OutboundMessage) => {
+    if (message.kind === "delta" && !options.verbose) {
+      return;
+    }
     if (options.verbose) {
       const header = colorCyan(`${prefix} [${message.chatId}] ->`);
       const payload = colorCyan(JSON.stringify(message, null, 2));

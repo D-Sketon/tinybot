@@ -114,6 +114,45 @@ describe("tinybotAgent", () => {
     });
   });
 
+  it("publishes streaming deltas before final response", async () => {
+    const provider = {
+      generate: vi.fn(),
+      generateStream: vi
+        .fn()
+        .mockImplementation(async (_messages, _tools, onDelta) => {
+          await onDelta?.("he");
+          await onDelta?.("llo");
+          return { content: "hello" };
+        }),
+    };
+    createProviderMock.mockReturnValue(provider);
+    getOrCreateMock.mockResolvedValue(createSession("cli:direct"));
+
+    const bus = { publishOutbound: vi.fn() };
+    const agent = new TinybotAgent(bus as any, {
+      cron: { enabled: false },
+      heartbeat: { enabled: false },
+    });
+
+    await (agent as any).handleInbound({
+      channel: "cli",
+      chatId: "direct",
+      senderId: "user",
+      content: "stream",
+    });
+
+    const calls = bus.publishOutbound.mock.calls.map((c) => c[0]);
+    expect(calls[0]).toEqual(
+      expect.objectContaining({ kind: "delta", content: "he", sequence: 1 }),
+    );
+    expect(calls[1]).toEqual(
+      expect.objectContaining({ kind: "delta", content: "llo", sequence: 2 }),
+    );
+    expect(calls[calls.length - 1]).toEqual(
+      expect.objectContaining({ kind: "final", content: "hello" }),
+    );
+  });
+
   it("executes tool calls and continues to final response", async () => {
     const provider = {
       generate: vi

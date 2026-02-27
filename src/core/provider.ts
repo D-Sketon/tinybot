@@ -13,10 +13,17 @@ export interface AssistantResponse {
   toolCalls?: ToolCall[];
 }
 
+export type StreamDeltaHandler = (delta: string) => void | Promise<void>;
+
 export interface Provider {
   generate: (
     messages: AgentMessage[],
     tools?: ToolSchema[],
+  ) => Promise<AssistantResponse>;
+  generateStream?: (
+    messages: AgentMessage[],
+    tools: ToolSchema[] | undefined,
+    onDelta?: StreamDeltaHandler,
   ) => Promise<AssistantResponse>;
 }
 
@@ -168,6 +175,25 @@ export class MockProvider implements Provider {
       content: `Echo (mock): ${preview}`,
     };
   }
+
+  /**
+   * Emits a deterministic stream of content chunks for testing.
+   */
+  async generateStream(
+    messages: AgentMessage[],
+    _tools?: ToolSchema[],
+    onDelta?: StreamDeltaHandler,
+  ): Promise<AssistantResponse> {
+    const response = await this.generate(messages);
+    const content = response.content ?? "";
+    if (onDelta) {
+      const chunkSize = Math.max(1, Math.ceil(content.length / 3));
+      for (let i = 0; i < content.length; i += chunkSize) {
+        await onDelta(content.slice(i, i + chunkSize));
+      }
+    }
+    return response;
+  }
 }
 
 /**
@@ -210,6 +236,119 @@ export class OpenAIProvider implements Provider {
     return {
       content: message.content ?? "",
       toolCalls: parseToolCalls(message.tool_calls),
+    };
+  }
+
+  /**
+   * Streams assistant deltas and returns the final response payload.
+   */
+  async generateStream(
+    messages: AgentMessage[],
+    tools?: ToolSchema[],
+    onDelta?: StreamDeltaHandler,
+  ): Promise<AssistantResponse> {
+    const body = this.buildRequestBody(messages, tools);
+    body.stream = true;
+    const response = await fetch(`${this.apiBase}/chat/completions`, {
+      method: "POST",
+      headers: this.buildHeaders(),
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      throw new Error(
+        `OpenAI API error: ${response.status} ${response.statusText}`,
+      );
+    }
+
+    if (!response.body) {
+      return this.generate(messages, tools);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder("utf-8");
+    let buffer = "";
+    const chunks: string[] = [];
+    const toolCalls = new Map<number, {
+      id?: string;
+      name?: string;
+      arguments?: string;
+    }>();
+
+    const applyToolCallDelta = (deltaCalls: any[]) => {
+      for (const call of deltaCalls) {
+        const index = typeof call.index === "number" ? call.index : 0;
+        const current = toolCalls.get(index) ?? { arguments: "" };
+        if (typeof call.id === "string") {
+          current.id = call.id;
+        }
+        const fn = call.function;
+        if (fn?.name) {
+          current.name = fn.name;
+        }
+        if (fn?.arguments) {
+          current.arguments = `${current.arguments ?? ""}${fn.arguments}`;
+        }
+        toolCalls.set(index, current);
+      }
+    };
+
+    const flushLine = async (line: string): Promise<boolean> => {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("data:")) return false;
+      const data = trimmed.slice(5).trim();
+      if (!data) return false;
+      if (data === "[DONE]") return true;
+      let payload: any;
+      try {
+        payload = JSON.parse(data);
+      } catch {
+        return false;
+      }
+      const delta = payload?.choices?.[0]?.delta;
+      if (typeof delta?.content === "string" && delta.content.length) {
+        chunks.push(delta.content);
+        if (onDelta) {
+          await onDelta(delta.content);
+        }
+      }
+      if (Array.isArray(delta?.tool_calls) && delta.tool_calls.length) {
+        applyToolCallDelta(delta.tool_calls);
+      }
+      return false;
+    };
+
+    let done = false;
+    while (!done) {
+      const { value, done: streamDone } = await reader.read();
+      if (streamDone) break;
+      buffer += decoder.decode(value, { stream: true });
+      let lineBreak = buffer.indexOf("\n");
+      while (lineBreak !== -1) {
+        const line = buffer.slice(0, lineBreak);
+        buffer = buffer.slice(lineBreak + 1);
+        if (await flushLine(line)) {
+          done = true;
+          break;
+        }
+        lineBreak = buffer.indexOf("\n");
+      }
+    }
+
+    const content = chunks.join("");
+    const toolCallsList = toolCalls.size
+      ? [...toolCalls.entries()]
+          .sort((a, b) => a[0] - b[0])
+          .map(([index, call]) => ({
+            id: call.id ?? `call-${index}`,
+            name: call.name ?? "unknown",
+            arguments: safeParseArguments(call.arguments ?? "{}"),
+          }))
+      : undefined;
+
+    return {
+      content,
+      toolCalls: toolCallsList,
     };
   }
 

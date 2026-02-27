@@ -14,6 +14,23 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
+const readUntil = async (
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  needle: string,
+): Promise<string> => {
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (let i = 0; i < 5; i += 1) {
+    const { value, done } = await reader.read();
+    if (done || !value) break;
+    buffer += decoder.decode(value);
+    if (buffer.includes(needle)) {
+      break;
+    }
+  }
+  return buffer;
+};
+
 describe("webhookChannel", () => {
   it("starts and describes listening address", async () => {
     (globalThis as any).Bun = {
@@ -31,7 +48,7 @@ describe("webhookChannel", () => {
 
     expect(serveMock).toHaveBeenCalled();
     expect(channel.isRunning()).toBe(true);
-    expect(channel.describe()).toBe("http://127.0.0.1:18080/inbound");
+    expect(channel.describe()).toBe("http://127.0.0.1:18080/messages");
   });
 
   it("does not restart when already running and clears state on stop", async () => {
@@ -75,6 +92,65 @@ describe("webhookChannel", () => {
     expect(body.status).toBe("ok");
   });
 
+  it("streams outbound messages when stream=true", async () => {
+    let outboundHandler: ((message: any) => void) | undefined;
+    const bus = {
+      subscribeOutbound: vi.fn(
+        (_channel: string, handler: (message: any) => void) => {
+          outboundHandler = handler;
+          return undefined;
+        },
+      ),
+      unsubscribeOutbound: vi.fn(),
+      publishInbound: vi.fn(),
+    };
+    const channel = new WebhookChannel(bus as any, {
+      host: "127.0.0.1",
+      port: 18080,
+      waitTimeoutMs: 50,
+    });
+
+    const req = new Request("http://localhost/messages?stream=true", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        channel: "webhook",
+        chatId: "room",
+        senderId: "user",
+        content: "ping",
+      }),
+    });
+    const res = await (channel as any).handleRequest(req);
+    const reader = res.body?.getReader();
+    expect(reader).toBeDefined();
+
+    await readUntil(reader!, "event: ready");
+
+    outboundHandler?.({
+      channel: "webhook",
+      chatId: "room",
+      content: "hi",
+      kind: "delta",
+      sequence: 1,
+    });
+
+    const delta = await readUntil(reader!, "event: delta");
+    expect(delta).toContain("\"content\":\"hi\"");
+
+    outboundHandler?.({
+      channel: "webhook",
+      chatId: "room",
+      content: "done",
+      kind: "final",
+      sequence: 2,
+    });
+
+    const final = await readUntil(reader!, "event: final");
+    expect(final).toContain("\"content\":\"done\"");
+    await reader!.cancel();
+    expect(bus.unsubscribeOutbound).toHaveBeenCalled();
+  });
+
   it("returns not found for unsupported routes", async () => {
     const bus = { subscribeOutbound: vi.fn(), publishInbound: vi.fn() };
     const channel = new WebhookChannel(bus as any, {
@@ -100,7 +176,7 @@ describe("webhookChannel", () => {
       secret: "shh",
     });
 
-    const req = new Request("http://localhost/inbound", { method: "POST" });
+    const req = new Request("http://localhost/messages", { method: "POST" });
     const res = await (channel as any).handleRequest(req);
     const body = await res.json();
 
@@ -145,7 +221,7 @@ describe("webhookChannel", () => {
       waitTimeoutMs: 50,
     });
 
-    const req = new Request("http://localhost/inbound", {
+    const req = new Request("http://localhost/messages", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: "not json",
@@ -165,7 +241,7 @@ describe("webhookChannel", () => {
       waitTimeoutMs: 50,
     });
 
-    const req = new Request("http://localhost/inbound", {
+    const req = new Request("http://localhost/messages", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({}),
@@ -194,7 +270,7 @@ describe("webhookChannel", () => {
       content: "queued",
     });
 
-    const req = new Request("http://localhost/inbound?wait=true", {
+    const req = new Request("http://localhost/messages?wait=true", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ content: "ping" }),
@@ -250,7 +326,7 @@ describe("webhookChannel", () => {
       waitTimeoutMs: 50,
     });
 
-    const req = new Request("http://localhost/inbound?wait=true", {
+    const req = new Request("http://localhost/messages?wait=true", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ content: "ping" }),
@@ -284,7 +360,7 @@ describe("webhookChannel", () => {
       waitTimeoutMs: 50,
     });
 
-    const req = new Request("http://localhost/inbound?wait=false", {
+    const req = new Request("http://localhost/messages?wait=false", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ content: "ping" }),
@@ -308,7 +384,7 @@ describe("webhookChannel", () => {
       waitTimeoutMs: 20,
     });
 
-    const req = new Request("http://localhost/inbound?wait=true", {
+    const req = new Request("http://localhost/messages?wait=true", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ content: "ping" }),

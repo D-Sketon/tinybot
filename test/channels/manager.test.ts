@@ -15,7 +15,7 @@ const {
   webhookIsRunningMock: vi.fn().mockReturnValue(true),
   webhookDescribeMock: vi
     .fn()
-    .mockReturnValue("http://127.0.0.1:18790/inbound"),
+    .mockReturnValue("http://127.0.0.1:18790/messages"),
 }));
 
 vi.mock("../../src/channels/cli.ts", () => ({

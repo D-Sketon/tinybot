@@ -29,6 +29,12 @@ const JSON_HEADERS = {
   "content-type": "application/json",
 };
 
+const EVENT_STREAM_HEADERS = {
+  "content-type": "text/event-stream",
+  "cache-control": "no-cache",
+  connection: "keep-alive",
+};
+
 /**
  * Exposes HTTP endpoints that enqueue inbound messages and optionally wait for replies.
  */
@@ -111,7 +117,7 @@ export class WebhookChannel {
     if (!this.listeningAddress) {
       return null;
     }
-    return `${this.listeningAddress}/inbound`;
+    return `${this.listeningAddress}/messages`;
   }
 
   private async handleRequest(request: Request): Promise<Response> {
@@ -130,7 +136,7 @@ export class WebhookChannel {
       });
     }
 
-    if (request.method === "POST" && url.pathname === "/inbound") {
+    if (request.method === "POST" && url.pathname === "/messages") {
       return this.handleInboundRequest(request, url);
     }
 
@@ -174,6 +180,12 @@ export class WebhookChannel {
 
     await this.bus.publishInbound(inbound);
 
+    const streamParam = url.searchParams.get("stream");
+    const shouldStream = streamParam === "true" || streamParam === "1";
+    if (shouldStream) {
+      return this.handleStreamingReply(inbound.channel, inbound.chatId);
+    }
+
     const waitParam = url.searchParams.get("wait");
     const shouldWait = waitParam !== "false";
     const reply = shouldWait
@@ -199,6 +211,7 @@ export class WebhookChannel {
     }
 
     const handler = async (message: OutboundMessage) => {
+      if (message.kind === "delta") return;
       this.pushReply(message);
     };
 
@@ -259,6 +272,87 @@ export class WebhookChannel {
       waiters.push(waiter);
       this.waiters.set(key, waiters);
     });
+  }
+
+  private handleStreamingReply(channel: string, chatId: string): Response {
+    const encoder = new TextEncoder();
+    let handler: ((message: OutboundMessage) => Promise<void>) | undefined;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    let closed = false;
+
+    const sendEvent = (
+      controller: ReadableStreamDefaultController<Uint8Array>,
+      event: string,
+      payload: Record<string, unknown>,
+      id?: string | number,
+    ) => {
+      const lines = [] as string[];
+      if (event) lines.push(`event: ${event}`);
+      if (id !== undefined) lines.push(`id: ${id}`);
+      lines.push(`data: ${JSON.stringify(payload)}`);
+      lines.push("");
+      const frame = `${lines.join("\n")}\n`;
+      controller.enqueue(encoder.encode(frame));
+    };
+
+    const stream = new ReadableStream<Uint8Array>({
+      start: (controller) => {
+        const finish = () => {
+          if (closed) return;
+          closed = true;
+          if (timeout) clearTimeout(timeout);
+          if (handler) {
+            this.bus.unsubscribeOutbound(channel, handler);
+          }
+          controller.close();
+        };
+
+        handler = async (message: OutboundMessage) => {
+          if (message.chatId !== chatId) return;
+          const event = message.kind === "delta" ? "delta" : "final";
+          sendEvent(
+            controller,
+            event,
+            {
+              channel: message.channel,
+              chatId: message.chatId,
+              content: message.content,
+              kind: message.kind ?? "message",
+              sequence: message.sequence,
+              media: message.media,
+              replyTo: message.replyTo,
+              metadata: message.metadata,
+            },
+            message.sequence,
+          );
+          if (message.kind !== "delta") {
+            finish();
+          }
+        };
+
+        this.bus.subscribeOutbound(channel, handler);
+        timeout = setTimeout(() => {
+          sendEvent(
+            controller,
+            "timeout",
+            { channel, chatId, status: "timeout" },
+          );
+          finish();
+        }, this.options.waitTimeoutMs);
+
+        sendEvent(controller, "ready", { channel, chatId, status: "ready" });
+      },
+      cancel: () => {
+        if (closed) return;
+        closed = true;
+        if (timeout) clearTimeout(timeout);
+        if (handler) {
+          this.bus.unsubscribeOutbound(channel, handler);
+        }
+      },
+    });
+
+    return new Response(stream, { headers: EVENT_STREAM_HEADERS });
   }
 
   private removeWaiter(key: string, target: PendingWaiter): void {
