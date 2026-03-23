@@ -1,4 +1,4 @@
-# tinybot
+# tinyclaw
 
 A lightweight agent framework built with Bun and TypeScript for learning and prototyping — not production-ready. Inspired by OpenClaw and nanobot.
 
